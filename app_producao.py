@@ -30,10 +30,14 @@ login_manager.init_app(app)
 login_manager.login_view = 'login'
 login_manager.login_message = 'Por favor, faça login para acessar esta página.'
 
+# Configurar sessão
+app.config['SESSION_TYPE'] = 'filesystem'
+app.config['PERMANENT_SESSION_LIFETIME'] = 1800  # 30 minutos
+
 # Variável global para controlar disponibilidade do Supabase
 SUPABASE_AVAILABLE = False
 
-# Importações com tratamento de erro
+# Importações com tratamento de erro robusto
 try:
     from config_producao import config
     app.config.from_object(config)
@@ -129,12 +133,38 @@ def authenticate_user(username, password):
         if SUPABASE_AVAILABLE:
             # Autenticação real com Supabase
             if username == 'admin' and password == 'admin123':
-                return {'id': 'admin', 'username': 'admin', 'nome': 'Administrador'}
+                # Criar usuário mock para Flask-Login
+                class MockUser:
+                    def __init__(self, user_id):
+                        self.id = user_id
+                        self.is_authenticated = True
+                        self.is_active = True
+                        self.is_anonymous = False
+                        self.username = username
+                        self.nome = 'Administrador'
+                    
+                    def get_id(self):
+                        return str(self.id)
+                
+                return MockUser('admin')
             return None
         else:
             # Autenticação mock para desenvolvimento
             if username == 'admin' and password == 'admin123':
-                return {'id': 'admin', 'username': 'admin', 'nome': 'Administrador'}
+                # Criar usuário mock para Flask-Login
+                class MockUser:
+                    def __init__(self, user_id):
+                        self.id = user_id
+                        self.is_authenticated = True
+                        self.is_active = True
+                        self.is_anonymous = False
+                        self.username = username
+                        self.nome = 'Administrador'
+                    
+                    def get_id(self):
+                        return str(self.id)
+                
+                return MockUser('admin')
             return None
     except Exception as e:
         logger.error(f"Erro na autenticação: {e}")
@@ -163,8 +193,8 @@ def save_image(file):
 def index():
     """Dashboard principal - redireciona para login se não autenticado"""
     try:
-        # Verificar se o usuário está autenticado
-        if not current_user.is_authenticated:
+        # Verificar se o usuário está autenticado de forma segura
+        if not current_user or not current_user.is_authenticated:
             logger.info("Usuário não autenticado, redirecionando para login")
             return redirect(url_for('login'))
         
@@ -186,14 +216,67 @@ def index():
         # Status da sincronização
         sync_status = get_sync_status()
         
-        return render_template('index.html',
-                             total_clientes=total_clientes,
-                             total_produtos=total_produtos,
-                             total_categorias=total_categorias,
-                             total_vendas=total_vendas,
-                             produtos_estoque_baixo=produtos_estoque_baixo,
-                             vendas_recentes=vendas_recentes,
-                             sync_status=sync_status)
+        try:
+            return render_template('index.html',
+                                 total_clientes=total_clientes,
+                                 total_produtos=total_produtos,
+                                 total_categorias=total_categorias,
+                                 total_vendas=total_vendas,
+                                 produtos_estoque_baixo=produtos_estoque_baixo,
+                                 vendas_recentes=vendas_recentes,
+                                 sync_status=sync_status)
+        except Exception as template_error:
+            logger.error(f"Erro ao renderizar template: {template_error}")
+            # Fallback para HTML simples
+            return f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Dashboard - Sistema Empresarial</title>
+                <meta charset="utf-8">
+                <style>
+                    body {{ font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }}
+                    .container {{ background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
+                    .stats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin: 30px 0; }}
+                    .stat-card {{ background: #667eea; color: white; padding: 20px; border-radius: 8px; text-align: center; }}
+                    .btn {{ background: #667eea; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin: 5px; display: inline-block; }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>🏠 Dashboard - Sistema Empresarial</h1>
+                    <p>Bem-vindo ao sistema! Aqui estão suas estatísticas:</p>
+                    
+                    <div class="stats">
+                        <div class="stat-card">
+                            <h3>👥 Clientes</h3>
+                            <p style="font-size: 2em; margin: 0;">{total_clientes}</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>📦 Produtos</h3>
+                            <p style="font-size: 2em; margin: 0;">{total_produtos}</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>🏷️ Categorias</h3>
+                            <p style="font-size: 2em; margin: 0;">{total_categorias}</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>💰 Vendas</h3>
+                            <p style="font-size: 2em; margin: 0;">{total_vendas}</p>
+                        </div>
+                    </div>
+                    
+                    <div style="text-align: center; margin-top: 30px;">
+                        <a href="/clientes" class="btn">👥 Gerenciar Clientes</a>
+                        <a href="/produtos" class="btn">📦 Gerenciar Produtos</a>
+                        <a href="/vendas" class="btn">💰 Gerenciar Vendas</a>
+                        <a href="/logout" class="btn">🚪 Sair</a>
+                    </div>
+                </div>
+            </body>
+            </html>
+            """
+            
     except Exception as e:
         logger.error(f"Erro no dashboard: {e}")
         # Em caso de erro, mostrar página simples
@@ -203,17 +286,20 @@ def index():
         <head>
             <title>Erro - Sistema Empresarial</title>
             <meta charset="utf-8">
-            <link rel="stylesheet" href="/static/style.css">
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }}
+                .error-container {{ background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center; }}
+                .btn {{ background: #667eea; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin: 5px; display: inline-block; }}
+            </style>
         </head>
         <body>
-            <div class="login-container">
-                <div class="login-form">
-                    <h1>⚠️ Erro no Dashboard</h1>
-                    <p>Erro: {e}</p>
-                    <hr>
-                    <p><a href="/login" class="btn btn-primary">← Ir para login</a></p>
-                    <p><a href="/fallback" class="btn btn-secondary">← Usar versão JavaScript</a></p>
-                </div>
+            <div class="error-container">
+                <h1>⚠️ Erro no Dashboard</h1>
+                <p>Erro: {e}</p>
+                <hr>
+                <p><a href="/login" class="btn">← Ir para login</a></p>
+                <p><a href="/fallback" class="btn">← Usar versão JavaScript</a></p>
+                <p><a href="/teste" class="btn">← Teste simples</a></p>
             </div>
         </body>
         </html>
@@ -233,14 +319,41 @@ def teste():
     <head>
         <title>Teste - Sistema Empresarial</title>
         <meta charset="utf-8">
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+            .container { background: rgba(255,255,255,0.1); padding: 30px; border-radius: 15px; backdrop-filter: blur(10px); max-width: 600px; margin: 0 auto; }
+            h1 { text-align: center; margin-bottom: 30px; }
+            .status { background: rgba(255,255,255,0.2); padding: 20px; border-radius: 10px; margin: 20px 0; }
+            .btn { background: rgba(255,255,255,0.2); color: white; padding: 10px 20px; text-decoration: none; border-radius: 8px; margin: 10px; display: inline-block; }
+            .btn:hover { background: rgba(255,255,255,0.3); }
+        </style>
     </head>
     <body>
-        <h1>🧪 TESTE FUNCIONANDO!</h1>
-        <p>✅ O Flask está rodando corretamente!</p>
-        <p>🔧 Agora vamos verificar a rota raiz...</p>
-        <hr>
-        <p><a href="/">← Tentar rota raiz</a></p>
-        <p><a href="/login">← Ir para login</a></p>
+        <div class="container">
+            <h1>🧪 TESTE FUNCIONANDO!</h1>
+            <p>✅ O Flask está rodando corretamente no Render!</p>
+            
+            <div class="status">
+                <h3>📊 Status do Sistema:</h3>
+                <p><strong>Flask:</strong> ✅ Funcionando</p>
+                <p><strong>Render:</strong> ✅ Hospedado</p>
+                <p><strong>URL:</strong> controle-visual.onrender.com</p>
+                <p><strong>Timestamp:</strong> """ + str(datetime.now()) + """</p>
+            </div>
+            
+            <div style="text-align: center; margin-top: 30px;">
+                <a href="/" class="btn">🏠 Tentar Dashboard</a>
+                <a href="/login" class="btn">🔐 Tentar Login</a>
+                <a href="/fallback" class="btn">📱 Versão JavaScript</a>
+                <a href="/debug" class="btn">🔍 Debug</a>
+            </div>
+            
+            <hr style="margin: 30px 0; border: 1px solid rgba(255,255,255,0.3);">
+            <p style="text-align: center; font-size: 14px; opacity: 0.8;">
+                Se você vê esta página, o Flask está funcionando!<br>
+                O problema pode estar nas outras rotas ou templates.
+            </p>
+        </div>
     </body>
     </html>
     """
@@ -300,7 +413,52 @@ def login():
             logger.error(f"Erro no login: {e}")
             flash('Erro no login!', 'error')
     
-    return render_template('login.html')
+    try:
+        return render_template('login.html')
+    except Exception as template_error:
+        logger.error(f"Erro ao renderizar template de login: {template_error}")
+        # Fallback para HTML simples
+        return """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Login - Sistema Empresarial</title>
+            <meta charset="utf-8">
+            <style>
+                body { font-family: Arial, sans-serif; margin: 0; padding: 0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+                .login-container { background: white; padding: 40px; border-radius: 15px; box-shadow: 0 20px 40px rgba(0,0,0,0.1); max-width: 400px; width: 100%; }
+                h1 { text-align: center; color: #667eea; margin-bottom: 30px; }
+                .form-group { margin-bottom: 20px; }
+                label { display: block; margin-bottom: 5px; font-weight: 600; color: #555; }
+                input { width: 100%; padding: 12px; border: 2px solid #e9ecef; border-radius: 8px; font-size: 16px; box-sizing: border-box; }
+                input:focus { outline: none; border-color: #667eea; }
+                .btn { background: #667eea; color: white; padding: 12px 20px; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; width: 100%; }
+                .btn:hover { background: #5a6fd8; }
+                .info { text-align: center; margin-top: 20px; color: #666; font-size: 14px; }
+            </style>
+        </head>
+        <body>
+            <div class="login-container">
+                <h1>🔐 Login</h1>
+                <form method="POST" action="/login">
+                    <div class="form-group">
+                        <label>Usuário:</label>
+                        <input type="text" name="username" value="admin" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Senha:</label>
+                        <input type="password" name="password" value="admin123" required>
+                    </div>
+                    <button type="submit" class="btn">Entrar</button>
+                </form>
+                <div class="info">
+                    <p><strong>Login padrão:</strong> admin / admin123</p>
+                    <p><a href="/">← Voltar para Dashboard</a></p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
 
 @app.route('/logout')
 @login_required
@@ -844,12 +1002,45 @@ def teste_clientes():
         logger.error(f"Erro no teste de clientes: {e}", exc_info=True)
         return jsonify({'erro': str(e)}), 500
 
+@app.route('/api/teste')
+def api_teste():
+    """Rota de teste que retorna JSON"""
+    return jsonify({
+        'status': 'success',
+        'message': 'API funcionando!',
+        'timestamp': str(datetime.now()),
+        'flask_version': '2.3.0+',
+        'supabase_available': SUPABASE_AVAILABLE,
+        'routes': ['/', '/login', '/teste', '/debug', '/fallback', '/api/teste']
+    })
+
+@app.route('/api/status')
+def api_status():
+    """Rota de status da aplicação"""
+    try:
+        return jsonify({
+            'status': 'online',
+            'app': 'Sistema Empresarial',
+            'version': '1.0.0',
+            'environment': 'production',
+            'timestamp': str(datetime.now()),
+            'supabase': 'available' if SUPABASE_AVAILABLE else 'unavailable',
+            'flask_login': 'configured',
+            'gunicorn': 'ready'
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'error': str(e),
+            'timestamp': str(datetime.now())
+        }), 500
+
 if __name__ == '__main__':
     logger.info("🚀 Iniciando Sistema Empresarial - VERSÃO PRODUÇÃO")
     
     try:
         # Testar conexão com Supabase
-        if supabase and supabase.test_connection():
+        if supabase and hasattr(supabase, 'test_connection') and supabase.test_connection():
             logger.info("✅ Conexão com Supabase estabelecida!")
             
             # Criar usuário padrão
@@ -857,18 +1048,25 @@ if __name__ == '__main__':
             
             # Iniciar sincronização automática
             logger.info("🔄 Iniciando sistema de sincronização...")
-            start_sync()
+            try:
+                start_sync()
+            except Exception as sync_error:
+                logger.warning(f"⚠️ Erro ao iniciar sincronização: {sync_error}")
         else:
-            logger.warning("⚠️ Conexão com Supabase falhou, mas continuando...")
+            logger.warning("⚠️ Conexão com Supabase falhou ou não disponível, mas continuando...")
             
             # Criar usuário padrão mesmo sem Supabase
             criar_usuario_padrao()
         
         # Iniciar aplicação
         logger.info("🌐 Iniciando servidor Flask para produção...")
-        app.run(debug=False, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+        port = int(os.environ.get('PORT', 5000))
+        logger.info(f"🚀 Servidor rodando na porta {port}")
+        app.run(debug=False, host='0.0.0.0', port=port)
         
     except Exception as e:
         logger.error(f"❌ Erro na inicialização: {e}")
         logger.info("🌐 Iniciando servidor Flask mesmo com erro...")
-        app.run(debug=False, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+        port = int(os.environ.get('PORT', 5000))
+        logger.info(f"🚀 Servidor rodando na porta {port} (modo de emergência)")
+        app.run(debug=False, host='0.0.0.0', port=port)
